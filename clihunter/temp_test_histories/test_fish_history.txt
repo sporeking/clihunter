@@ -1,0 +1,9 @@
+- cmd: echo hello fish
+  when: 1400000000
+- cmd: cd /tmp
+  when: 1400000001
+- cmd: |
+    echo line1
+    echo line2
+  when: 1400000002
+- cmd: fish_command_without_when

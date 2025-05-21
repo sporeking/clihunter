@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "clihunter"
+version = "0.1.0"
+description = "A CLI tool to save, search, and generate command-line snippets using natural language and LLMs."
+authors = ["sporeking123@gmail.com"]
+readme = "README.md"
+packages = [{include = "clihunter", from = "."}] # Points to the inner clihunter directory
+
+[tool.poetry.dependencies]
+python = "^3.9" # Python 3.9 或更高版本
+typer = {extras = ["all"], version = "^0.12.3"}
+pydantic = "^2.7.4"
+python-dotenv = "^1.0.1"         # 用于从 .env 文件加载配置
+requests = "^2.32.3"             # 用于调用 LLM API (如果使用云服务)
+sentence-transformers = "^3.0.1" # 用于生成 embeddings
+# rank-bm25 = "^0.2.2"           # 如果不使用 FTS5 而在 Python 中实现 BM25
+# 如果使用本地Ollama，可能需要 aiohttp 或其他HTTP客户端
+# ollama = "^0.2.0" # 如果直接使用 ollama python 库
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.2"
+pytest-cov = "^5.0.0"
+black = "^24.4.2" # 代码格式化
+ruff = "^0.4.8"   # Linter
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+clihunter = "clihunter.cli:app" # 使 clihunter 命令可用

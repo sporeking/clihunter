@@ -1,0 +1,6 @@
+: 1609459200:0;echo hello zsh
+ls -l
+: 1609459260:0;git status
+: 1609459320:0;这是一个带空格的命令
+  
+echo $PATH

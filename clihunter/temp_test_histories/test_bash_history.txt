@@ -1,0 +1,8 @@
+#1500000000
+echo hello bash
+pwd
+#1500000060
+export VAR=value
+#1500000000
+#1500000120
+another command
