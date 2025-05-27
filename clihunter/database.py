@@ -309,7 +309,7 @@ def search_commands_fts(query_text: str, top_k: int = config.DEFAULT_TOP_K_RESUL
                 SELECT command_id, rank 
                 FROM commands_fts 
                 WHERE search_text MATCH ? 
-                ORDER BY rank 
+                ORDER BY bm25(commands_fts) 
                 LIMIT ?
             """
             cursor.execute(sql, (query_text, top_k))

@@ -1,7 +1,7 @@
 # clihunter/shell_utils.py
 import subprocess
 import shlex 
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Set
 
 # Restrict the number of lines or tokens from "--help" or "man"
 # This is to avoid overwhelming the user with too much information.
@@ -149,6 +149,61 @@ def get_command_context(raw_command_text: str) -> Dict[str, Optional[str]]:
         context["man_info"] = f"Error: Unexpected error occurred while processing man page for '{base_command}': {e}"
         
     return context
+
+def preprocess_and_expand_query(
+    query_text: str,
+    synonym_map: Dict[str, List[str]], # synonym_map 的值是包含该词自身的同义词列表
+    apply_prefix_to_all_terms: bool = False
+) -> str:
+    """
+    对查询文本进行预处理（小写、分词），使用同义词扩展，
+    并将所有独立处理后的词条（原始词+同义词，已应用前缀和短语引号）用 " OR " 连接。
+    """
+    if not query_text or not query_text.strip():
+        return ""
+
+    original_terms: List[str] = query_text.lower().split() # 分词并转小写
+    if not original_terms:
+        return ""
+
+    all_processed_terms_for_or: Set[str] = set() # 使用集合来确保最终OR连接的词条是唯一的
+
+    for term in original_terms:
+        # 获取该词及其所有同义词（synonym_map 中的词和列表应该已经是小写）
+        # synonym_map.get(term, [term]) 确保即使词不在词典中，它自身也会被处理
+        term_and_its_synonyms_phrases = synonym_map.get(term, [term])
+
+        for s_term_phrase in term_and_its_synonyms_phrases:
+            # s_term_phrase 可能是一个单词，也可能是多词短语如 "list files"
+            
+            term_to_add = s_term_phrase # 默认情况下，同义词条直接使用
+
+            # 1. 如果是多词短语，FTS5 进行短语匹配时需要用双引号包裹
+            if " " in s_term_phrase.strip(): # 判断是否为多词短语
+                term_to_add = f'"{s_term_phrase}"'
+            
+            # 2. 应用前缀匹配 '*' 到处理后的词条 (单个词或带引号的短语)
+            if apply_prefix_to_all_terms:
+                # 确保只对有实际内容的词条加星号，并且避免重复加星号
+                # 对于短语 "some phrase"，前缀查询是 "some phrase*"
+                # 对于单词 word，前缀查询是 word*
+                is_phrase = term_to_add.startswith('"') and term_to_add.endswith('"')
+                actual_content = term_to_add[1:-1] if is_phrase else term_to_add # 获取引号内的内容或单词本身
+
+                if actual_content and not actual_content.endswith("*"):
+                    if is_phrase:
+                        term_to_add = f'"{actual_content}*"' # 例如 "list files*"
+                    else:
+                        term_to_add += "*" # 例如 word*
+            
+            all_processed_terms_for_or.add(term_to_add)
+    
+    if not all_processed_terms_for_or:
+        return ""
+        
+    # 将所有唯一的、处理过的词条用 " OR " 连接
+    # 为了查询稳定性，可以对最终列表排序，但对于纯OR查询，顺序不影响逻辑结果
+    return " OR ".join(sorted(list(all_processed_terms_for_or)))
 
 if __name__ == '__main__':
     print("--- Testing get_base_command ---")

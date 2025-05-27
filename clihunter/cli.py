@@ -13,6 +13,8 @@ from . import models
 from . import history_parser
 from . import llm_handler
 from . import utils
+from .synonyms_data import get_synonym_lookup_map
+from .utils import preprocess_and_expand_query
 # from .search import sparse_search 
 # from .search import dense_search 
 # from .search import hybrid_search 
@@ -29,85 +31,18 @@ app = typer.Typer(
     rich_markup_mode="markdown"
 )
 
-# --- Helper function _display_results_with_fzf (remains unchanged) ---
-def _display_results_with_fzf(results: List[models.CommandEntry]) -> Optional[models.CommandEntry]:
-    if not results:
-        typer.secho("🤷 No matching commands found.", fg=typer.colors.YELLOW)
-        return None
-    fzf_input_lines = []
-    for entry in results:
-        tags_str = ", ".join(entry.tags) if entry.tags else "No tags"
-        # description and processed_command are now in English
-        display_description = entry.description or "No English description"
-        display_processed_command = entry.processed_command or entry.raw_command
+_SYNONYM_MAP_INSTANCE: Optional[Dict[str, List[str]]] = None
 
-        line = (
-            f"{entry.id} ::: "
-            f"{display_description} ::: "
-            f"`{entry.raw_command}` (Processed: `{display_processed_command}`) ::: " 
-            f"[{tags_str}]"
-        )
-        fzf_input_lines.append(line)
-    
-    fzf_input_str = "\n".join(fzf_input_lines)
-
-    try:
-        fzf_options_str = config.FZF_DEFAULT_OPTIONS + (
-            " --print-query --expect=ctrl-c,ctrl-x "
-            " --header 'Press Enter to select, Ctrl-C/Ctrl-X to cancel, Ctrl-P to toggle preview'"
-            " --prompt 'Select command > ' "
-            " --delimiter=' ::: ' --with-nth='2..'"
-        )
-        fzf_cmd_list = [config.FZF_EXECUTABLE] + [opt for opt in fzf_options_str.split(' ') if opt]
-
-        process = subprocess.run(
-            fzf_cmd_list,
-            input=fzf_input_str,
-            text=True,
-            capture_output=True,
-            check=False
-        )
-
-        if process.returncode == 0:
-            selected_lines = process.stdout.strip().splitlines()
-            if not selected_lines:
-                 typer.echo("🤔 fzf did not return a selection.")
-                 return None
-            selected_line_content = selected_lines[-1]
-            
-            # (This is a workaround - better would be configuring fzf to return needed info in one call)
-            fzf_get_id_options = (
-                config.FZF_DEFAULT_OPTIONS.split() + 
-                ["--print-query", "--select-1", "--height", "10%", "--prompt", "Confirm selection (Enter) >"] + 
-                ["--delimiter= ::: ", "--nth", "1"] 
-            )
-            process_for_id = subprocess.run(
-                [config.FZF_EXECUTABLE] + fzf_get_id_options,
-                input=fzf_input_str, 
-                text=True, capture_output=True, check=False
-            )
-            if process_for_id.returncode == 0 and process_for_id.stdout.strip():
-                selected_id = process_for_id.stdout.strip().splitlines()[-1] 
-                for entry in results:
-                    if entry.id == selected_id:
-                        return entry
-            else: 
-                typer.echo("🤔 Selection confirmation failed or canceled.")
-                return None
-
-        elif process.returncode == 1: typer.echo("🤔 No command selected.")
-        elif process.returncode == 130: typer.echo("Operation canceled by user (Ctrl-C).")
-        # fzf 1.43+ uses exit code 3 for Ctrl-X
-        elif process.returncode == 3 and "--expect=ctrl-x" in fzf_options_str: typer.echo("Operation canceled by user (Ctrl-X).")
-        else: typer.secho(f"fzf execution error (exit code {process.returncode}):\n{process.stderr}", fg=typer.colors.RED)
-        return None
-    except FileNotFoundError:
-        typer.secho(f"Error: fzf executable not found at '{config.FZF_EXECUTABLE}'.", fg=typer.colors.RED)
-        typer.echo("You can install fzf from https://github.com/junegunn/fzf")
-        return None
-    except Exception as e:
-        typer.secho(f"Unknown error while interacting with fzf: {e}", fg=typer.colors.RED)
-        return None
+def _get_or_load_synonyms() -> Dict[str, List[str]]:
+    """
+    Lazy load the synonym map from synonyms_data.py.
+    """
+    global _SYNONYM_MAP_INSTANCE
+    if _SYNONYM_MAP_INSTANCE is None:
+        _SYNONYM_MAP_INSTANCE = get_synonym_lookup_map()
+        if not _SYNONYM_MAP_INSTANCE:
+            _SYNONYM_MAP_INSTANCE = {}
+    return _SYNONYM_MAP_INSTANCE
 
 # --- CLI command ---
 @app.command(name="initdb", help="Initialize database and table structure (if they don't exist).")
@@ -347,22 +282,33 @@ def sync_command(
 
 @app.command(name="search", help="Search commands by natural language description (English preferred).")
 def search_command(
-    query: Annotated[Optional[str], typer.Argument(help="Your natural language query (can be in Chinese, will be translated to English for search). If using --live-search mode, this initial query can be empty.")] = None,
+    query: Annotated[Optional[str], typer.Argument(help="Your natural language query. If using --live-search mode, this initial query can be empty.")] = None,
     top_k: Annotated[int, typer.Option("-k", help="Return at most K results.")] = config.DEFAULT_TOP_K_RESULTS,
-    translate_query: Annotated[bool, typer.Option("--translate/--no-translate", help="Whether to automatically translate non-English queries to English.")] = True,
-    enhance_query: Annotated[bool, typer.Option("--enhance/--no-enhance", help="Whether to use LLM to enhance (translated) English queries.")] = True,
+    use_synonyms: Annotated[bool, typer.Option("--synonyms/--no-synonyms", help="Whether to use synonym dictionary.")] = True,
+    # translate_query: Annotated[bool, typer.Option("--translate/--no-translate", help="Whether to automatically translate non-English queries to English.")] = True,
+    # enhance_query: Annotated[bool, typer.Option("--enhance/--no-enhance", help="Whether to use LLM to enhance (translated) English queries.")] = True,
     raw_output: Annotated[bool, typer.Option("--raw-output", help="[Non-live mode] Only output selected raw command string to stdout.")] = False,
-    live_search_query: Annotated[Optional[str], typer.Option("--live-search-query", help="[Internal use] Query provided by fzf's reload binding for dynamic results. Implies skipping LLM processing and internal fzf calls.")] = None
+    live_search_query: Annotated[Optional[str], typer.Option("--live-search-query", help="[Internal use] Query provided by fzf's reload binding for dynamic results. Implies skipping LLM processing and internal fzf calls.")] = None,
 ):
+    synonym_map = _get_or_load_synonyms()
+
     # --- Mode 1: Live Search (fzf reload) ---
     if live_search_query is not None:
         current_fzf_query = live_search_query
-        
-        query_terms = current_fzf_query.split()
-        if query_terms and len(query_terms[-1]) >= 1: 
-            query_terms[-1] = query_terms[-1] + "*"
-            current_fzf_query = " ".join(query_terms)
-            # For simplicity, users can type `*` in fzf input if they want wildcards
+
+        if use_synonyms and synonym_map:
+            # Preprocess the query with synonyms
+            current_fzf_query = preprocess_and_expand_query(
+                current_fzf_query,
+                synonym_map=synonym_map,
+                apply_prefix_to_all_terms=True
+            )
+        else:
+            query_terms = current_fzf_query.split()
+            if query_terms and len(query_terms[-1]) >= 1: 
+                query_terms[-1] = query_terms[-1] + "*"
+                current_fzf_query = " ".join(query_terms)
+                # For simplicity, users can type `*` in fzf input if they want wildcards
 
         fts_results = database.search_commands_fts(current_fzf_query, top_k=config.BM25_TOP_K) 
         
@@ -376,45 +322,39 @@ def search_command(
         for entry in db_results:
             tags_str = ", ".join(entry.tags) if entry.tags else ""
             # Here, the "`" character will run directly, so we must replace it with "\\`"
-            safe_output = f"{entry.raw_command}\x1F{entry.description or ''}\x1F{entry.processed_command or entry.raw_command}\x1F[{tags_str}]".replace('`', '\\`')
-            print(safe_output.replace("\n", "\\n")) # fzf may handle newlines, so we escape them with \n
+            safe_output = f"{entry.raw_command}\x1F{entry.description or ''}\x1F{entry.processed_command or entry.raw_command}\x1F[{tags_str}]"
+            safe_output = safe_output.replace("`", "\"") 
+            # safe_output = safe_output.replace("~", "\\~") 
+            safe_output = safe_output.replace("\n", "\\n") # fzf may handle newlines, so we escape them with \n
+            print(safe_output) # fzf may handle newlines, so we escape them with \n
         raise typer.Exit(0) 
 
     # --- Mode 2: Formal search --- ()
     # TODO: Not implemented yet, something is not useful (e.g. translate, llm enhanced query -- because it's slow)
+    print("--- Formal search mode ---")
+    print(query)
     if query is None: 
         typer.secho("Error: Query parameter is required in non-live-search mode.", fg=typer.colors.RED)
         raise typer.Exit(code=1)
 
     # (The logic here is essentially the same as the previous version of search_command)
-    if not raw_output:
-        typer.echo(f"🔍 Searching: \"{query}\" (Top-K: {top_k}, Translate: {translate_query}, Enhance: {enhance_query})")
-
     english_query_for_search = query
-    if translate_query:
-        # ... (Translation logic, same as previous version)
-        if not raw_output: typer.echo("🔄 Attempting to translate query to English...")
-        translated = llm_handler.translate_text(query, target_language="English")
-        if translated and translated.lower() != query.lower():
-            english_query_for_search = translated
-            if not raw_output: typer.echo(f"   Translated English query: \"{english_query_for_search}\"")
-        elif translated:
-            if not raw_output: typer.echo("   Query appears to already be in English or translation made no significant changes.")
-            # english_query_for_search = query 
-        else:
-            if not raw_output: typer.secho("   ⚠️ Query translation failed, will use original query.", fg=typer.colors.YELLOW)
-            # english_query_for_search = query 
 
-    if enhance_query:
-        # ... (Enhancement logic, same as previous version)
-        if not raw_output: typer.echo(f"🧠 Attempting to enhance English query: \"{english_query_for_search}\"...")
-        enhanced = llm_handler.enhance_query_for_sparse_search(english_query_for_search)
-        if enhanced and enhanced != english_query_for_search:
-            english_query_for_search = enhanced
-            if not raw_output: typer.echo(f"   Enhanced English query: \"{english_query_for_search}\"")
-        else:
-            if not raw_output: typer.secho("   ℹ️ LLM did not significantly enhance the query or enhancement failed.", fg=typer.colors.YELLOW)
-    
+    if use_synonyms and synonym_map:
+        # Preprocess the query with synonyms
+        english_query_for_search = preprocess_and_expand_query(
+            english_query_for_search,
+            synonym_map=synonym_map,
+            apply_prefix_to_all_terms=True
+        )
+    else:
+        query_terms = english_query_for_search.split()
+        if query_terms and len(query_terms[-1]) >= 1: 
+            query_terms[-1] = query_terms[-1] + "*"
+            english_query_for_search = " ".join(query_terms)
+            # For simplicity, users can type `*` in fzf input if they want wildcards
+
+    typer.echo(f"🔍 Searching for: \"{english_query_for_search}\"")
     if not raw_output: typer.echo(f"⚡️ Executing sparse search (FTS5) with query: \"{english_query_for_search}\"")
     fts_results_with_scores = database.search_commands_fts(english_query_for_search, top_k=top_k)
 
@@ -434,35 +374,10 @@ def search_command(
 
     if not raw_output: typer.echo(f"✅ (FTS5) Found {len(results)} potentially relevant commands, displaying via fzf...")
     
-    selected_entry = _display_results_with_fzf(results) 
-
-    if selected_entry:
-        if raw_output:
-            print(selected_entry.raw_command)
-            raise typer.Exit(0)
-        else:
-            # ... (Detailed print logic, same as previous version)
-            typer.secho("\n✨ You selected:", bold=True)
-            typer.echo(f"   ID                : {selected_entry.id}")
-            typer.echo(f"   Raw command       : `{selected_entry.raw_command}`", fg=typer.colors.CYAN, bold=True)
-            typer.echo(f"   English description: {selected_entry.description or 'N/A'}")
-            typer.echo(f"   LLM-generated (EN) command: `{selected_entry.processed_command or 'N/A'}`")
-            if selected_entry.tags:
-                typer.echo(f"   Tags               : {', '.join(selected_entry.tags)}")
-            try:
-                import pyperclip
-                pyperclip.copy(selected_entry.raw_command)
-                typer.secho("\n📋 Command copied to clipboard!", fg=typer.colors.GREEN)
-            except Exception:
-                 typer.secho("\n⚠️ Failed to copy to clipboard.", fg=typer.colors.YELLOW)
-
-
     elif raw_output: 
         raise typer.Exit(code=1)
 
-# ... (initdb, init-history, sync, add等命令，以及callback和if __name__块保持不变) ...
-
-    # ... (Other commands and main_callback, if __name__ == "__main__": app() remain unchanged) ...
+# ... (Other commands and main_callback, if __name__ == "__main__": app() remain unchanged) ...
 
 
 @app.command(name="add", help="Manually add a command to the database.")

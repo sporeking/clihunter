@@ -34,24 +34,6 @@ Output only the command itself, without any additional explanations, markdown co
 English Description: "{description_text}"
 Command:
 """,
-    "enhance_query_for_sparse_search": """\
-You are an AI assistant helping with command retrieval. The user's original query (already in English) is for finding a Shell command.
-Analyze the user's **English query** below and enhance or rewrite it to be more effective for a keyword-based sparse retrieval system (like BM25/FTS5 using an English index).
-The goal is to improve recall and precision by extracting core keywords, adding possible synonyms or relevant command names, and potentially forming a more effective search phrase.
-Return only the enhanced English query string, keeping it concise and effective.
-
-User's English Query: "{user_query}"
-Enhanced English Query String:
-""",
-    "translate_text": """\
-Translate the following text from {source_language} to {target_language}.
-Return only the translated text, without any additional explanations or prefixes.
-
-Source Text:
-"{text_to_translate}"
-
-Translated Text:
-""",
     "generate_command_rag": """\
 You are an intelligent Shell command generation assistant. The user wants to perform a task, and some potentially relevant command history (in English) is provided as context.
 Carefully read the user's task description (assumed to be in English or translated to English) and the English reference commands.
