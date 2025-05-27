@@ -9,16 +9,17 @@ Stop memorizing obscure command flags or endlessly Googling – let CliHunter be
 ## ✨ Key Features
 
 * **Natural Language Search:** Describe the task (e.g., "dotfiles add" -> "chezmoi add xxx") and CliHunter will try to find matching commands.
-* **Interactive Live Search:** A widget powered by `fzf` allows you to type and see search results update in real-time, directly in your command line. 
-* **Personal Command Database:** Add your own frequently used or hard-to-remember commands along with descriptions and tags.
+* **Interactive Live Search:** A widget powered by `fzf` allows you to type and see search results update in real-time, directly in your command line.
+* **Personal Command Database:** Add your own frequently used or hard-to-remember commands along with descriptions and tags. (TODO)
 
 ## 🛠️ Installation
 
 **Prerequisites:**
+
 * Python 3.8+
 * `pip`
 * `fzf` (for live search functionality)
-* Zsh (for live search ZLE widget integration)
+* Zsh (for live search ZLE widget integration) (Recommended, I didn't test this on other shells)
 
    ```bash
    git clone https://github.com/sporeking/clihunter.git
@@ -26,8 +27,8 @@ Stop memorizing obscure command flags or endlessly Googling – let CliHunter be
    pip install -e .
    ```
 
-
 ## ⚙️ Configuration
+
 **1. LLM API Keys (If applicable):**
 If your llm_handler.py uses external LLM APIs (e.g., OpenAI, Google Gemini, Anthropic), you'll typically need to set environment variables for API keys. For example:
 
@@ -35,28 +36,30 @@ If your llm_handler.py uses external LLM APIs (e.g., OpenAI, Google Gemini, Anth
 export OPENAI_API_KEY="your_openai_api_key_here"
 # Add this to your shell configuration file (e.g., ~/.zshrc or ~/.bashrc)
 ```
+
 Refer to llm_handler.py or its documentation for specific environment variables required.
 
 **2. CliHunter Configuration:**
 CliHunter might use a configuration file (e.g., ~/.config/clihunter/config.ini or environment variables) for settings like DEFAULT_TOP_K_RESULTS, BM25_TOP_K, paths, etc. Please specify if this is the case.
 (Currently, based on the Python snippet, config.DEFAULT_TOP_K_RESULTS and config.BM25_TOP_K are imported, suggesting a config.py or similar module).
 After you configure the API of LLM, you can run:  
-```
+
+```bash
 clihunter initdb
 clihunter init-history
 ```
-*For cheap init-history, you can use free models (e.g. THUDM/GLM-4-9B-0414) on [SiliconFlow](https://cloud.siliconflow.cn/).*
 
+*For cheap init-history, you can use free models (e.g. THUDM/GLM-4-9B-0414) on [SiliconFlow](https://cloud.siliconflow.cn/).*
 
 **3. Zsh Integration (for Live Search):**
 
 An example config in your ~/.zshrc:
-```
+
+```shell
 clihunter_live_fzf_search() {
-  local initial_query="${LBUFFER}" 
+  local initial_query="${LBUFFER}" # 获取光标左侧的当前输入作为初始查询
   local selected_line
   local query_for_fzf_reload
-  
   local reload_cmd="clihunter search --live-search-query {q} 2>/dev/null || echo 'ERROR: clihunter failed or no results'"
 
   selected_line=$( \
@@ -72,14 +75,14 @@ clihunter_live_fzf_search() {
         --bind="start:reload(clihunter search --live-search-query {q} 2>/dev/null || echo 'ERROR: clihunter failed or no results')" \
         --bind="change:reload(clihunter search --live-search-query {q} 2>/dev/null || echo 'ERROR: clihunter failed or no results')" \
         --bind="enter:accept" \
-        --preview='printf "DESC: %s\nPROC: %s\nTAGS: %s\n" "{2}" "{3}" "{4}"' \
+        --preview='echo {} | awk -F "\\x1F" "{printf \"DESC: %s\\nPROC: %s\\nTAGS: %s\\n\", \$2, \$3, \$4}" | fold -s -w "${FZF_PREVIEW_COLUMNS:-80}"' \
+        # --preview='printf "DESC: %s\nPROC: %s\nTAGS: %s\n" "{2}" "{3}" "{4}" | fold -s -w "$FZF_PREVIEW_COLUMNS"' \
   )
-
   if [ -n "$selected_line" ]; then
     local selected_command=$(echo "$selected_line" | awk -F $'\x1F' '{print $1}' | tr -d '\n')
     if [ -n "$selected_command" ]; then
       LBUFFER="$selected_command" 
-      RBUFFER=""          
+      RBUFFER=""                 
       zle redisplay
     else
       zle send-break 
@@ -93,6 +96,7 @@ zle -N clihunter_live_fzf_search
 
 bindkey '^H' clihunter_live_fzf_search
 ```
+
 Then source your ~/.zshrc or open a new terminal.
 
 ## 🚀 Usage
@@ -101,6 +105,6 @@ Live search: press Ctrl+H (in our example).
 
 ## TODO
 
-- Make a better search. We need a search algo fast and intelligent. (Sparse search is not good enough for searching forgotten commands. )
-- Make more useful for users. For example, users can keep their own commands' repo that is important and more customizable.
-- Make a more easy way for enhancing history. Now, we simply use llm to summarize and rewrite the history to enhance. But it's too slow and expensive that many useless or similiar commands are also enhanced.
+* Make a better search. We need a search algo fast and intelligent. (Sparse search is not good enough for searching forgotten commands. )
+* Make more useful for users. For example, users can keep their own commands' repo that is important and more customizable.
+* Make a more easy way for enhancing history. Now, we simply use llm to summarize and rewrite the history to enhance. But it's too slow and expensive that many useless or similiar commands are also enhanced.
