@@ -2,6 +2,8 @@
 
 **Find the shell commands you need, right when you need them.**
 
+(It's a toy project just for fun, and now I don't think this project is a useful thing.)
+
 CliHunter is a command-line utility designed to help you quickly find shell commands by describing what you want to do in natural language. It leverages a local FTS5-powered search combined with LLM-enhanced history processing and a powerful `fzf`-driven live search interface for your terminal.
 
 Stop memorizing obscure command flags or endlessly Googling – let CliHunter be your guide!
@@ -108,3 +110,4 @@ Live search: press Ctrl+H (in our example).
 * Make a better search. We need a search algo fast and intelligent. (Sparse search is not good enough for searching forgotten commands. )
 * Make more useful for users. For example, users can keep their own commands' repo that is important and more customizable.
 * Make a more easy way for enhancing history. Now, we simply use llm to summarize and rewrite the history to enhance. But it's too slow and expensive that many useless or similiar commands are also enhanced.
+
